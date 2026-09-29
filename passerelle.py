@@ -198,7 +198,7 @@ UID_RE = re.compile(r"AMANR5L(\d+)PO(\d+)B(\w+?)P(\d+)D(\d+)N(\d+)")
 TEXTES = {str(t["numero"]): t for t in CFG["textes"] if t.get("actif", True)}
 TOUS = ("seance", "commission", "avis")
 # Codes d'organe connus (appris automatiquement ensuite à partir des amendements lus)
-ORG = {"seance": set(CFG.get("organes_seance", ["717460"])), "commission": set(CFG.get("organes_commission", ["59048"]))}
+ORG = {"seance": set(CFG.get("organes_seance", ["838901", "717460"])), "commission": set(CFG.get("organes_commission", ["59048"])), "avis": set()}
 
 
 def texte_of(uid):
@@ -286,8 +286,10 @@ def parse(uid, j, ref):
         lecture, kind = t.get("commission", "Commission des finances AN"), "commission"
     else:
         lecture, kind = t.get("avis", "Commissions saisies pour avis"), "avis"
-    if kind != "avis":
-        ORG[kind].add(org)
+    for k in ORG:
+        if k != kind:
+            ORG[k].discard(org)
+    ORG[kind].add(org)
     dc = find_key(g(a, "discussionCommune") or {}, lambda k: k.lower().startswith("iddiscussion"))
     di = find_key(g(a, "discussionIdentique") or {}, lambda k: k.lower().startswith("iddiscussion"))
     return {
@@ -334,6 +336,10 @@ def maj_amendements(ref):
         ORG.setdefault(k, set()).update(v)
     amdts = load("amendements.json", {})
     seen = state.get("vus", {})
+    if amdts:
+        log(f"Reprise : {len(amdts)} amendement(s) déjà en réserve, ils ne seront pas retéléchargés")
+    else:
+        log("Aucune réserve trouvée : premier passage (ou données précédentes non publiées)")
     today = dt.date.today()
     sig = json.dumps({k: sorted(t.get("suivre", TOUS)) for k, t in TEXTES.items()}, sort_keys=True)
     if state.get("perimetre") != sig:
@@ -351,8 +357,10 @@ def maj_amendements(ref):
             for ts, uid in pubs:
                 if ts > seen.get(uid, "") and ts >= todo.get(uid, ""):
                     todo[uid] = ts
-    log(f"  {len(todo)} amendement(s) nouveaux ou modifiés")
+    deja = sum(1 for u in todo if u in amdts)
+    log(f"  {len(todo)} à télécharger : {len(todo) - deja} jamais vus, {deja} republiés depuis (changement de sort, rectification)")
     ok = 0
+    n_ign = 0
     budget = float(CFG.get("budget_minutes", 40)) * 60
     uids = list(todo)
     complet = True
@@ -362,14 +370,17 @@ def maj_amendements(ref):
                 complet = False
                 log(f"  budget de temps atteint : {len(uids) - start_i} amendement(s) reportés à la prochaine exécution")
                 break
-            for uid, rec in ex.map(lambda u: fetch_amdt(u, ref), uids[start_i:start_i + 300]):
+            # appliquer tout de suite les codes d'organe appris en cours de route
+            tranche = [u for u in uids[start_i:start_i + 300] if suivi(texte_of(u)[0], kind_of(texte_of(u)[1].group(2)))]
+            n_ign += len(uids[start_i:start_i + 300]) - len(tranche)
+            for uid, rec in ex.map(lambda u: fetch_amdt(u, ref), tranche):
                 if rec:
                     amdts[uid] = rec
                     seen[uid] = todo[uid]
                     ok += 1
-            log(f"  {min(start_i + 300, len(uids))}/{len(uids)}")
+            log(f"  {min(start_i + 300, len(uids))}/{len(uids)} examinés" + (f", {n_ign} hors périmètre ignorés" if n_ign else ""))
             save("amendements.json", amdts)
-            state.update(vus=seen)
+            state.update(vus=seen, organes={k: sorted(v) for k, v in ORG.items()})
             save("etat.json", state)
     state.update(vus=seen, organes={k: sorted(v) for k, v in ORG.items()})
     if complet:
