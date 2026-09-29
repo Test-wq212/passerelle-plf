@@ -2,10 +2,24 @@
   "legislature": "17",
   "groupe": "DEM",
   "textes": [
-    { "numero": "1906", "nom": "PLF 2026 – 1re lecture", "seance": "Séance AN", "commission": "Commission des finances AN", "avis": "Commissions saisies pour avis" }
+    {
+      "numero": "1906",
+      "nom": "PLF 2026 – 1re lecture",
+      "actif": true,
+      "suivre": [
+        "seance",
+        "commission",
+        "avis"
+      ],
+      "seance": "Séance AN",
+      "commission": "Commission des finances AN",
+      "avis": "Commissions saisies pour avis"
+    }
   ],
   "depuis": "2025-10-01",
-  "scrutins_mots_cles": ["loi de finances pour 2026"],
+  "scrutins_mots_cles": [
+    "loi de finances pour 2026"
+  ],
   "scrutins_toutes_les_heures": 6,
   "ignorer_irrecevables_des_autres": true,
   "longueur_dispositif": 2500,
