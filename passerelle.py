@@ -195,7 +195,10 @@ def groupe_abrev(ref, po):
 
 # ---------------------------------------------------------------- amendements
 UID_RE = re.compile(r"AMANR5L(\d+)PO(\d+)B(\w+?)P(\d+)D(\d+)N(\d+)")
-TEXTES = {str(t["numero"]): t for t in CFG["textes"]}
+TEXTES = {str(t["numero"]): t for t in CFG["textes"] if t.get("actif", True)}
+TOUS = ("seance", "commission", "avis")
+# Codes d'organe connus (appris automatiquement ensuite à partir des amendements lus)
+ORG = {"seance": set(CFG.get("organes_seance", ["717460"])), "commission": set(CFG.get("organes_commission", ["59048"]))}
 
 
 def texte_of(uid):
@@ -203,6 +206,17 @@ def texte_of(uid):
     if not m or m.group(1) != LEG:
         return None, None
     return TEXTES.get(m.group(3)), m
+
+
+def kind_of(org):
+    for k, codes in ORG.items():
+        if org in codes:
+            return k
+    return None  # inconnu : on le lit pour l'apprendre
+
+
+def suivi(t, kind):
+    return kind is None or kind in t.get("suivre", TOUS)
 
 
 def publications(day):
@@ -215,7 +229,8 @@ def publications(day):
         parts = line.strip().split(";")
         if len(parts) >= 2 and "/AMAN" in parts[1] and parts[1].endswith(".xml"):
             uid = parts[1].rsplit("/", 1)[-1][:-4]
-            if texte_of(uid)[0]:
+            t, m = texte_of(uid)
+            if t and suivi(t, kind_of(m.group(2))):
                 out.append((parts[0].strip(), uid))
     return out
 
@@ -264,18 +279,23 @@ def parse(uid, j, ref):
     if not mission:
         mm = re.search(r"Mission\s*«\s*([^»]{3,140}?)\s*»", dispo)
         mission = mm.group(1).strip() if mm else ""
+    org = m.group(2)
     if prefix == "AN":
-        lecture = t.get("seance", "Séance AN")
+        lecture, kind = t.get("seance", "Séance AN"), "seance"
     elif "FIN" in prefix:
-        lecture = t.get("commission", "Commission des finances AN")
+        lecture, kind = t.get("commission", "Commission des finances AN"), "commission"
     else:
-        lecture = t.get("avis", "Commissions saisies pour avis")
+        lecture, kind = t.get("avis", "Commissions saisies pour avis"), "avis"
+    if kind != "avis":
+        ORG[kind].add(org)
     dc = find_key(g(a, "discussionCommune") or {}, lambda k: k.lower().startswith("iddiscussion"))
     di = find_key(g(a, "discussionIdentique") or {}, lambda k: k.lower().startswith("iddiscussion"))
     return {
         "uid": uid,
         "num": num,
         "lecture": lecture,
+        "_kind": kind,
+        "_texte": m.group(3),
         "partie": int(m.group(4)) if m else None,
         "article": article,
         "auteur": auteur,
@@ -310,6 +330,8 @@ def fetch_amdt(uid, ref):
 
 def maj_amendements(ref):
     state = load("etat.json", {})
+    for k, v in (state.get("organes") or {}).items():
+        ORG.setdefault(k, set()).update(v)
     amdts = load("amendements.json", {})
     seen = state.get("vus", {})
     today = dt.date.today()
@@ -343,7 +365,7 @@ def maj_amendements(ref):
             save("amendements.json", amdts)
             state.update(vus=seen)
             save("etat.json", state)
-    state.update(vus=seen)
+    state.update(vus=seen, organes={k: sorted(v) for k, v in ORG.items()})
     if complet:
         state["dernier_jour"] = str(today)
     save("amendements.json", amdts)
@@ -434,9 +456,12 @@ def main():
     nous = norm(CFG.get("groupe", ""))
     items = []
     for r in amdts.values():
+        t = TEXTES.get(r.get("_texte") or (UID_RE.search(r["uid"]).group(3) if UID_RE.search(r["uid"]) else ""))
+        if not t or (r.get("_kind") and r["_kind"] not in t.get("suivre", TOUS)):
+            continue
         if ignorer_irr and norm(r.get("sort", "")).startswith("irrecevable") and norm(r.get("groupe", "")) != nous:
             continue
-        r = {k: v for k, v in r.items() if k not in ("chronotag", "cosignataires") and v not in ("", None)}
+        r = {k: v for k, v in r.items() if k not in ("chronotag", "cosignataires") and not k.startswith("_") and v not in ("", None)}
         items.append(r)
     items.sort(key=lambda r: (r.get("lecture", ""), r.get("ordre", ""), r.get("num", "")))
     out = {
