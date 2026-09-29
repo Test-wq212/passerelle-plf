@@ -1,0 +1,48 @@
+name: Mise à jour depuis l'Assemblée
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # toutes les 15 minutes (heure UTC ; GitHub peut décaler de quelques minutes)
+  workflow_dispatch: {}      # bouton « Run workflow » pour lancer à la main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: passerelle-an
+  cancel-in-progress: false
+
+jobs:
+  maj:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reprendre les données déjà collectées
+        run: |
+          mkdir -p sortie
+          if git fetch --depth=1 origin donnees 2>/dev/null; then
+            git --work-tree=sortie checkout FETCH_HEAD -- . && git reset -q
+          fi
+
+      - name: Interroger l'open data de l'Assemblée
+        run: python3 passerelle.py
+
+      - name: Publier le fichier sur la branche « donnees »
+        run: |
+          cd sortie
+          rm -rf .git
+          git init -q -b donnees
+          git config user.name "passerelle-an"
+          git config user.email "passerelle-an@users.noreply.github.com"
+          git add -A
+          git commit -qm "Données AN au $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" donnees
+
+      - name: Mettre à jour le lien de téléchargement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view fichier >/dev/null 2>&1 || gh release create fichier --title "Données Assemblée nationale" --notes "Fichier mis à jour automatiquement toutes les 15 minutes." --target donnees
+          gh release upload fichier sortie/suivi-plf-an.json --clobber
