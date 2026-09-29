@@ -335,6 +335,12 @@ def maj_amendements(ref):
     amdts = load("amendements.json", {})
     seen = state.get("vus", {})
     today = dt.date.today()
+    sig = json.dumps({k: sorted(t.get("suivre", TOUS)) for k, t in TEXTES.items()}, sort_keys=True)
+    if state.get("perimetre") != sig:
+        if state.get("perimetre"):
+            log("Périmètre suivi modifié : relecture complète des publications depuis le début")
+        state["dernier_jour"] = None
+        state["perimetre"] = sig
     start = dt.date.fromisoformat(state.get("dernier_jour") or CFG.get("depuis", str(today)))
     start = min(start, today) - dt.timedelta(days=1)
     days = [start + dt.timedelta(days=i) for i in range((today - start).days + 1)]
